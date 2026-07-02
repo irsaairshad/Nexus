@@ -1,51 +1,76 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Users, Bell, Calendar, TrendingUp, AlertCircle, PlusCircle } from 'lucide-react';
+import { Users, Bell, Calendar, TrendingUp, AlertCircle, PlusCircle, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Card, CardBody, CardHeader } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
-import { CollaborationRequestCard } from '../../components/collaboration/CollaborationRequestCard';
 import { InvestorCard } from '../../components/investor/InvestorCard';
 import { useAuth } from '../../context/AuthContext';
-import { CollaborationRequest } from '../../types';
-import { getRequestsForEntrepreneur } from '../../data/collaborationRequests';
 import { investors } from '../../data/users';
 import { getMyMeetings, Meeting } from '../../api/meetingService';
+import api from '../../api/axios';
+import toast from 'react-hot-toast';
+
+interface CollabRequest {
+  _id: string;
+  sender: { _id: string; name: string; email: string; avatarUrl: string; role: string; startupName?: string; industry?: string };
+  receiver: { _id: string; name: string; email: string; avatarUrl: string; role: string };
+  message: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+}
 
 export const EntrepreneurDashboard: React.FC = () => {
   const { user } = useAuth();
-  const [collaborationRequests, setCollaborationRequests] = useState<CollaborationRequest[]>([]);
-  const [recommendedInvestors, setRecommendedInvestors] = useState(investors.slice(0, 3));
+  const [collaborationRequests, setCollaborationRequests] = useState<CollabRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [recommendedInvestors] = useState(investors.slice(0, 3));
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [meetingsLoading, setMeetingsLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
-      // Load collaboration requests (still from mock data — Week 2 will replace this)
-      const requests = getRequestsForEntrepreneur(user.id);
-      setCollaborationRequests(requests);
+      // Load real collaboration requests
+      api.get('/collaborations')
+        .then(res => setCollaborationRequests(res.data))
+        .catch(err => console.error('Failed to load requests:', err))
+        .finally(() => setRequestsLoading(false));
 
-      // Load real meetings from backend
+      // Load real meetings
       getMyMeetings()
-        .then((data) => setMeetings(data))
-        .catch((err) => console.error('Failed to load meetings:', err))
+        .then(data => setMeetings(data))
+        .catch(err => console.error('Failed to load meetings:', err))
         .finally(() => setMeetingsLoading(false));
     }
   }, [user]);
 
-  const handleRequestStatusUpdate = (requestId: string, status: 'accepted' | 'rejected') => {
-    setCollaborationRequests(prevRequests =>
-      prevRequests.map(req =>
-        req.id === requestId ? { ...req, status } : req
-      )
-    );
+  const handleAccept = async (requestId: string) => {
+    try {
+      await api.put(`/collaborations/${requestId}/accept`);
+      setCollaborationRequests(prev =>
+        prev.map(r => r._id === requestId ? { ...r, status: 'accepted' } : r)
+      );
+      toast.success('Collaboration request accepted!');
+    } catch {
+      toast.error('Failed to accept request');
+    }
+  };
+
+  const handleReject = async (requestId: string) => {
+    try {
+      await api.put(`/collaborations/${requestId}/reject`);
+      setCollaborationRequests(prev =>
+        prev.map(r => r._id === requestId ? { ...r, status: 'rejected' } : r)
+      );
+      toast.success('Request rejected');
+    } catch {
+      toast.error('Failed to reject request');
+    }
   };
 
   if (!user) return null;
 
-  const pendingRequests = collaborationRequests.filter(req => req.status === 'pending');
-
-  // Upcoming meetings = accepted meetings with future dates
+  const pendingRequests = collaborationRequests.filter(r => r.status === 'pending');
   const upcomingMeetings = meetings.filter(m =>
     m.status === 'accepted' && new Date(m.date) >= new Date()
   );
@@ -57,11 +82,8 @@ export const EntrepreneurDashboard: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-900">Welcome, {user.name}</h1>
           <p className="text-gray-600">Here's what's happening with your startup today</p>
         </div>
-
         <Link to="/investors">
-          <Button leftIcon={<PlusCircle size={18} />}>
-            Find Investors
-          </Button>
+          <Button leftIcon={<PlusCircle size={18} />}>Find Investors</Button>
         </Link>
       </div>
 
@@ -75,7 +97,9 @@ export const EntrepreneurDashboard: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm font-medium text-primary-700">Pending Requests</p>
-                <h3 className="text-xl font-semibold text-primary-900">{pendingRequests.length}</h3>
+                <h3 className="text-xl font-semibold text-primary-900">
+                  {requestsLoading ? '...' : pendingRequests.length}
+                </h3>
               </div>
             </div>
           </CardBody>
@@ -90,14 +114,13 @@ export const EntrepreneurDashboard: React.FC = () => {
               <div>
                 <p className="text-sm font-medium text-secondary-700">Total Connections</p>
                 <h3 className="text-xl font-semibold text-secondary-900">
-                  {collaborationRequests.filter(req => req.status === 'accepted').length}
+                  {requestsLoading ? '...' : collaborationRequests.filter(r => r.status === 'accepted').length}
                 </h3>
               </div>
             </div>
           </CardBody>
         </Card>
 
-        {/* Upcoming Meetings — now from real API */}
         <Card className="bg-accent-50 border border-accent-100">
           <CardBody>
             <div className="flex items-center">
@@ -130,23 +153,65 @@ export const EntrepreneurDashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Collaboration requests */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Collaboration Requests */}
           <Card>
             <CardHeader className="flex justify-between items-center">
               <h2 className="text-lg font-medium text-gray-900">Collaboration Requests</h2>
               <Badge variant="primary">{pendingRequests.length} pending</Badge>
             </CardHeader>
-
             <CardBody>
-              {collaborationRequests.length > 0 ? (
+              {requestsLoading ? (
+                <p className="text-center text-gray-500 py-4">Loading requests...</p>
+              ) : collaborationRequests.length > 0 ? (
                 <div className="space-y-4">
                   {collaborationRequests.map(request => (
-                    <CollaborationRequestCard
-                      key={request.id}
-                      request={request}
-                      onStatusUpdate={handleRequestStatusUpdate}
-                    />
+                    <div key={request._id} className="p-4 border border-gray-200 rounded-lg">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={request.sender.avatarUrl || `https://ui-avatars.com/api/?name=${request.sender.name}`}
+                            alt={request.sender.name}
+                            className="w-10 h-10 rounded-full"
+                          />
+                          <div>
+                            <p className="font-medium text-gray-900">{request.sender.name}</p>
+                            <p className="text-sm text-gray-500 capitalize">{request.sender.role}</p>
+                            {request.sender.startupName && (
+                              <p className="text-sm text-gray-500">{request.sender.startupName}</p>
+                            )}
+                          </div>
+                        </div>
+                        <Badge
+                          variant={request.status === 'accepted' ? 'success' : request.status === 'rejected' ? 'danger' : 'warning'}
+                        >
+                          {request.status}
+                        </Badge>
+                      </div>
+
+                      {request.message && (
+                        <p className="mt-2 text-sm text-gray-600 bg-gray-50 p-2 rounded">
+                          "{request.message}"
+                        </p>
+                      )}
+
+                      {request.status === 'pending' && request.receiver._id === user.id && (
+                        <div className="flex gap-2 mt-3">
+                          <button
+                            onClick={() => handleAccept(request._id)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors"
+                          >
+                            <CheckCircle size={14} /> Accept
+                          </button>
+                          <button
+                            onClick={() => handleReject(request._id)}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-red-100 text-red-600 text-sm rounded-lg hover:bg-red-200 transition-colors"
+                          >
+                            <XCircle size={14} /> Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -163,7 +228,7 @@ export const EntrepreneurDashboard: React.FC = () => {
             </CardBody>
           </Card>
 
-          {/* Upcoming Meetings List */}
+          {/* Upcoming Meetings */}
           {upcomingMeetings.length > 0 && (
             <Card>
               <CardHeader>
@@ -200,14 +265,9 @@ export const EntrepreneurDashboard: React.FC = () => {
                 View all
               </Link>
             </CardHeader>
-
             <CardBody className="space-y-4">
               {recommendedInvestors.map(investor => (
-                <InvestorCard
-                  key={investor.id}
-                  investor={investor}
-                  showActions={false}
-                />
+                <InvestorCard key={investor.id} investor={investor} showActions={false} />
               ))}
             </CardBody>
           </Card>
